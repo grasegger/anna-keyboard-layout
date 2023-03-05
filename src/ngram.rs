@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fs};
+use std::{collections::HashMap, fs, process};
 
 use toml::Table;
 
@@ -6,28 +6,25 @@ pub struct Ngrams {
     length: usize,
     chars: Vec<char>,
     pub penalties: Vec<f64>,
-}
-
-lazy_static! {
-    #[derive(Debug)]
-    static ref MOVEMENT : HashMap<String, Table> = {
-        let movement_raw = fs::read_to_string("./movement.toml")
-        .expect("Unable to read file");
-        toml::from_str(&movement_raw).unwrap()
-    };
+    movement: HashMap<String, Table>,
+    counter: u128,
 }
 
 impl Ngrams {
     pub fn new(length: usize) -> Self {
-        format!("{:?}", MOVEMENT.clone());
         let mut penalties = vec![];
         for _ in 0..length - 1 {
             penalties.push(0.0);
         }
+
+        let movement_raw = fs::read_to_string("./movement.toml").expect("Unable to read file");
+        let movement = toml::from_str(&movement_raw).unwrap();
         Self {
             length,
             chars: vec![],
             penalties,
+            movement,
+            counter: 0,
         }
     }
 
@@ -46,27 +43,40 @@ impl Ngrams {
     }
 
     fn push_penalty(&mut self, char: char, layout: &str) {
-        let pos = layout.chars().position(|c| c == char).unwrap().to_string();
+        self.counter += 1;
 
-        if let Some(last_char) = self.chars.last() {
-            let last_char_pos = layout
-                .chars()
-                .position(|c| c == *last_char)
-                .unwrap()
-                .to_string();
-            if let Some(value) = MOVEMENT.get(&pos) {
-                if let Some(penalty) = value.get(&last_char_pos) {
-                    
+        let mut lchars = layout.chars();
+        let pos = lchars.position(|c| c == char);
 
-                    if let Some(f_val) = penalty.as_float() {
-                        self.penalties.push(f_val);
-                    } else {
-                        println!("{}", penalty);
+        match pos {
+            Some(pos) => {
+                let pos = pos.to_string();
+                let last = self.chars.last();
+                if let Some(last_char) = last {
+                    if let Some(last_char_pos) = lchars.position(|c| c == *last_char) {
+                        let last_char_pos = last_char_pos.to_string();
+                        if let Some(value) = self.movement.get(&pos) {
+                            if let Some(penalty) = value.get(&last_char_pos) {
+                                if let Some(f_val) = penalty.as_float() {
+                                    self.penalties.push(f_val);
+                                } else {
+                                    println!("{}", penalty);
+                                }
+                            }
+                        }
                     }
+                } else if self.counter > 1 {
+                    println!(
+                        "{} | Cant find last {} in {}, tried {:?} | {:?}",
+                        process::id(),
+                        char,
+                        layout,
+                        last,
+                        self.counter
+                    );
                 }
-            } else {
-                println!("WARN: No movement for index {}", pos);
             }
+            None => (),
         }
     }
 
