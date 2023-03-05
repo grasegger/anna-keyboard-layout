@@ -215,7 +215,7 @@ impl std::fmt::Display for Score {
 
         write!(
             f,
-            "{}         |\n+---------------------+ score: {}",
+            "{}         |\n+---------------------+\nscore: {}",
             res,
             score.separate_with_spaces()
         )
