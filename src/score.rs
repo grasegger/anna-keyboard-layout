@@ -1,5 +1,6 @@
 use ngram::Ngrams;
 use rayon::prelude::{IntoParallelRefIterator, ParallelIterator};
+use thousands::Separable;
 
 use std::{
     fmt,
@@ -172,27 +173,27 @@ impl std::fmt::Debug for Score {
 impl std::fmt::Display for Score {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut lyt = self.layout.chars().into_iter();
-        let mut res = "".to_string();
+        let mut res = "+---------------------+\n|".to_string();
 
         for _ in 0..10 {
             let char = lyt.next().unwrap();
-            let new = format!("{}{}", res, char);
+            let new = format!("{} {}", res, char);
             res = new;
         }
 
-        res = format!("{} | effort: {:.2}\n", res, self.effort);
+        res = format!("{} | effort: {:.2}\n|", res, self.effort);
 
         for _ in 0..10 {
             let char = lyt.next().unwrap();
-            let new = format!("{}{}", res, char);
+            let new = format!("{} {}", res, char);
             res = new;
         }
 
-        res = format!("{} | movement: {:.2}\n", res, self.penalty);
+        res = format!("{} | movement: {:.2}\n|", res, self.penalty);
 
         for _ in 0..10 {
             let char = lyt.next().unwrap();
-            let new = format!("{}{}", res, char);
+            let new = format!("{} {}", res, char);
             res = new;
         }
 
@@ -201,16 +202,22 @@ impl std::fmt::Display for Score {
             res, self.perc_left, self.perc_right
         );
 
-        res = format!("{}    ", res);
+        res = format!("{}|        ", res);
         for _ in 0..2 {
             let char = lyt.next().unwrap();
-            let new = format!("{}{}", res, char);
+            let new = format!("{} {}", res, char);
             res = new;
         }
 
-        let score = (self.effort + self.penalty)
-            * (self.perc_left.max(self.perc_right) - self.perc_left.min(self.perc_right));
+        let score = ((self.effort + self.penalty)
+            * (self.perc_left.max(self.perc_right) - self.perc_left.min(self.perc_right))
+            * 10.0) as u128;
 
-        write!(f, "{}     |\n-----------| score: {:.2}", res, score)
+        write!(
+            f,
+            "{}         |\n+---------------------+ score: {}",
+            res,
+            score.separate_with_spaces()
+        )
     }
 }
