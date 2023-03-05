@@ -211,6 +211,6 @@ impl std::fmt::Display for Score {
         let score = (self.effort + self.penalty)
             * (self.perc_left.max(self.perc_right) - self.perc_left.min(self.perc_right));
 
-        write!(f, "{}     | score: {}", res, score)
+        write!(f, "{}     |\n-----------| score: {:.2}", res, score)
     }
 }
