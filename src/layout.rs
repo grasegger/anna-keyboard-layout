@@ -1,115 +1,246 @@
-use std::fs;
+use std::{collections::HashMap, fmt::Display, fs::read_to_string};
 
 use itertools::Itertools;
+use once_cell::sync::Lazy;
 
-use crate::score::Score;
+use crate::{score::Score, xgrams::Xgrams};
 
-lazy_static! {
-    static ref EFFORT: Vec<f64> = {
-        let effort_raw = fs::read_to_string("./effort.json").expect("Unable to read file");
-        serde_json::from_str(&effort_raw).unwrap()
-    };
-}
+static EFFORT: Lazy<Vec<f32>> = Lazy::new(|| {
+    let effort_raw = read_to_string("./effort.json").expect("Unable to read file");
+    serde_json::from_str(&effort_raw).unwrap()
+});
 
+static MOVEMENT: Lazy<HashMap<String, HashMap<String, f32>>> = Lazy::new(|| {
+    let movement_raw = read_to_string("./movement.toml").expect("Unable to read file");
+    let movement = toml::from_str(&movement_raw).unwrap();
+    movement
+});
+
+#[derive(Debug, Clone)]
 pub struct Layout {
-    pub layout: String,
-    score: Score,
+    pub line: String,
+    pub score: Score,
+    left: String,
 }
 
 impl Layout {
-    pub fn init(layout: &str) -> Option<Self> {
-        if layout.len() != 32 {
-            println!(
-                "Layouts must be exactly 32 chars long. `{}` does not match that.",
-                layout
-            );
-            None
-        } else {
-            Some(Self {
-                layout: layout.to_string(),
-                score: Score {
-                    effort: 0.0,
-                    perc_left: 0.0,
-                    perc_right: 0.0,
-                    penalty: 0.0,
-                },
-            })
+    pub fn score(&mut self, xgrams: &Xgrams) {
+        for (char, times) in &xgrams.x1 {
+            let char = Self::convert_len_1_string_to_char(char.to_string());
+            if let Some(char) = char {
+                self.score.x1 += *times as f32 * self.get_score_for_char(char);
+
+                self.score.counter_left += self.get_left_for_char(char) as u128 * *times as u128;
+                self.score.counter_right += self.get_right_for_char(char) as u128 * *times as u128;
+            }
         }
-    }
 
-    pub fn is_left(&self, char: &char) -> u8 {
-        match self.get_char_pos(char) {
-            Some(pos) => match pos {
-                0..=4 => 1,
-                10..=14 => 1,
-                20..=24 => 1,
-                30 => 1,
-                _ => 0,
-            },
-            None => 0,
-        }
-    }
+        for (chars, times) in &xgrams.x2 {
+            let no_dups = chars.chars().into_iter().unique().collect_vec().len() > 1;
 
-    pub fn is_right(&self, char: &char) -> u8 {
-        if self.is_left(char) == 1 {
-            0
-        } else {
-            1
-        }
-    }
+            if no_dups {
+                self.score.counter_left +=
+                    self.is_all_left(chars.to_string()) as u128 * *times as u128;
+                self.score.counter_right +=
+                    self.is_all_right(chars.to_string()) as u128 * *times as u128;
 
-    pub fn get_char_pos(&self, char: &char) -> Option<u8> {
-        let pos = self.layout.chars().position(|c| c == *char);
+                let positions: Vec<usize> = chars
+                    .chars()
+                    .into_iter()
+                    .map(|char| self.line.chars().position(|c| c == char))
+                    .filter(|pos| pos.is_some())
+                    .map(|pos| pos.unwrap())
+                    .collect_vec();
 
-        match pos {
-            _ => None,
-        }
-    }
-
-    pub fn read_from_file(file: &str) -> Vec<Layout> {
-        let raw_layouts = fs::read_to_string(file).unwrap();
-        let layouts = raw_layouts.split("\n").collect_vec();
-
-        let layouts = layouts
-            .iter()
-            .map(|source| Layout::init(source))
-            .filter(|layout| layout.is_some())
-            .map(|layout| layout.unwrap())
-            .collect_vec();
-
-        layouts
-    }
-
-    pub fn are_on_same_finger(&self, a: &char, b: &char) -> bool {
-        let pos_a = self.get_char_pos(a).unwrap();
-        let pos_b = self.get_char_pos(b).unwrap();
-
-        if pos_a >= 30 || pos_b >= 30 {
-            false
-        } else {
-            let column_a = pos_a % 10;
-            let column_b = pos_b % 10;
-
-            if column_a == column_b {
-                true
-            } else {
-                let first_col = column_a.min(column_b);
-                let second_col = column_a.max(column_b);
-
-                if first_col == 3 && second_col == 4 {
-                    true
-                } else if first_col == 5 && second_col == 6 {
-                    true
-                } else {
-                    false
+                if let Some((first, rest)) = positions.split_first() {
+                    for next in rest {
+                        let next = next.to_string();
+                        let first = first.to_string();
+                        if let Some(value) = MOVEMENT.get(&first) {
+                            if let Some(penalty) = value.get(&next) {
+                                self.score.x2 = *times as f32 * penalty;
+                            }
+                        }
+                    }
                 }
             }
         }
     }
 
-    pub fn add_effort_for(&self, char: &char) {
-        if let Some(pos) = self.get_char_pos(char) {
-            self.score.effort += EFFORT[pos as usize];
+    fn is_all_left(&self, chars: String) -> u8 {
+        let count: u8 = chars.chars().map(|c| self.get_left_for_char(c)).sum();
+        match count == chars.len() as u8 {
+            true => 1,
+            false => 0,
         }
+    }
+
+    fn is_all_right(&self, chars: String) -> u8 {
+        let count: u8 = chars.chars().map(|c| self.get_right_for_char(c)).sum();
+        match count == chars.len() as u8 {
+            true => 1,
+            false => 0,
+        }
+    }
+
+    fn get_score_for_char(&self, char: char) -> f32 {
+        let pos = self.line.chars().position(|c| c == char);
+
+        match pos {
+            Some(position) => EFFORT[position],
+            None => 1.0,
+        }
+    }
+
+    fn convert_len_1_string_to_char(source: String) -> Option<char> {
+        if source.len() > 1 {
+            None
+        } else {
+            Some(*source.chars().into_iter().collect_vec().first().unwrap())
+        }
+    }
+
+    fn get_left_for_char(&self, char: char) -> u8 {
+        let pos = self.left.chars().position(|c| c == char);
+        match pos {
+            Some(_) => 1,
+            None => 0,
+        }
+    }
+
+    fn get_right_for_char(&self, char: char) -> u8 {
+        if Self::get_left_for_char(self, char) == 0 {
+            1
+        } else {
+            0
+        }
+    }
+
+    pub(crate) fn defend(&mut self, hunter: &Layout) {
+        let my = self.score;
+        let their = hunter.score;
+
+        if my.x1 < their.x1 {
+            self.score.points += 1;
+        }
+
+        if my.x2 < their.x2 {
+            self.score.points += 1;
+        }
+
+        if my.x3 < their.x3 {
+            self.score.points += 1;
+        }
+
+        if my.x4 < their.x4 {
+            self.score.points += 1;
+        }
+
+        if my.x5 < their.x5 {
+            self.score.points += 1;
+        }
+
+        let my_sum = my.counter_left + my.counter_right;
+        let my_perc = my.counter_left as f64 / my_sum as f64 * 100.0;
+        let their_sum = their.counter_left + my.counter_right;
+        let their_perc = their.counter_left as f64 / their_sum as f64 * 100.0;
+
+        if (50.0 - my_perc) < (50.0 - their_perc) {
+            self.score.points += 1;
+        }
+    }
+}
+
+impl From<&str> for Layout {
+    fn from(line: &str) -> Self {
+        Self::from(line.to_string())
+    }
+}
+
+impl From<&String> for Layout {
+    fn from(line: &String) -> Self {
+        Self::from(line.to_string())
+    }
+}
+
+impl From<String> for Layout {
+    fn from(line: String) -> Self {
+        let mut chs = line.chars().into_iter();
+        let mut left = "".to_string();
+        let mut right = "".to_string();
+
+        for _ in 0..3 {
+            for _ in 0..5 {
+                let char = chs.next().unwrap();
+                let new = format!("{}{}", left, char);
+                left = new;
+            }
+
+            for _ in 0..5 {
+                let char = chs.next().unwrap();
+                let new = format!("{}{}", right, char);
+                right = new;
+            }
+        }
+        Self {
+            line,
+            score: Score::default(),
+            left,
+        }
+    }
+}
+
+impl Eq for Layout {}
+
+impl PartialEq for Layout {
+    fn eq(&self, other: &Self) -> bool {
+        self.line == other.line && self.score == other.score
+    }
+}
+
+impl Ord for Layout {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.score.cmp(&other.score)
+    }
+}
+
+impl PartialOrd for Layout {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        self.score.partial_cmp(&other.score)
+    }
+}
+
+impl Display for Layout {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut res = "#####################\n\n".to_string();
+
+        let mut layout = self.line.chars();
+
+        for _x in 0..3 {
+            for _y in 0..10 {
+                let char = layout.next().unwrap();
+                res = format!("{} {}", res, char);
+            }
+            res = format!("{}\n", res);
+        }
+
+        res = format!("{}        ", res);
+        for _ in 0..2 {
+            let char = layout.next().unwrap();
+            res = format!("{} {}", res, char);
+        }
+
+        res = format!("{}\n\nPoints: {}", res, self.score.points);
+        res = format!("{}\n---------------------", res);
+        res = format!("{}\nEffort: {}", res, self.score.x1);
+        res = format!("{}\nBigrams: {}", res, self.score.x2);
+        res = format!("{}\nTrigrams: {}", res, self.score.x3);
+        res = format!("{}\n4-grams: {}", res, self.score.x4);
+        res = format!("{}\n5-grams: {}", res, self.score.x5);
+        res = format!("{}\nleft: {}", res, self.score.counter_left);
+        res = format!("{}\nright: {}", res, self.score.counter_right);
+        res = format!("{}\n#####################\n", res);
+
+        write!(f, "{}", res,)
     }
 }
